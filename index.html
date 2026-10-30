@@ -5,6 +5,44 @@
    <script src="https://unpkg.com/aframe-event-set-component@3.0.3/dist/aframe-event-set-component.min.js"></script>
    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.4/dist/aframe-extras.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@fern-solutions/aframe-sky-background/dist/sky-background.umd.min.js"></script>
+    <!-- Componente: saludo de Carmen al hacer clic (ratón o gatillo VR) -->
+    <script>
+      AFRAME.registerComponent('saludo-carmen', {
+        schema: {
+          gesto:  {default: 'Talk_with_Right_Hand_Open'},  // animación mientras habla
+          reposo: {default: 'Wave_One_Hand'},              // animación normal
+          fondo:  {default: 0.3}                           // volumen de la música mientras habla (0-1)
+        },
+        init: function () {
+          this.hablando = false;
+          this.el.addEventListener('click', () => this.saludar());
+          this.el.addEventListener('sound-ended', () => this.terminar());
+        },
+        saludar: function () {
+          if (this.hablando) return;
+          const sonido = this.el.components.sound;
+          if (!sonido || !sonido.loaded) return;
+          this.hablando = true;
+          this.bajarFondo(true);
+          this.el.setAttribute('animation-mixer', {clip: this.data.gesto, loop: 'repeat', crossFadeDuration: 0.4});
+          sonido.stopSound();
+          sonido.playSound();
+        },
+        terminar: function () {
+          this.hablando = false;
+          this.bajarFondo(false);
+          this.el.setAttribute('animation-mixer', {clip: this.data.reposo, loop: 'repeat', crossFadeDuration: 0.4});
+        },
+        bajarFondo: function (bajar) {
+          document.querySelectorAll('a-sound').forEach(s => {
+            const snd = s.components.sound;
+            if (!snd) return;
+            if (bajar) { this.volFondo = snd.data.volume; s.setAttribute('sound', 'volume', snd.data.volume * this.data.fondo); }
+            else if (this.volFondo !== undefined) { s.setAttribute('sound', 'volume', this.volFondo); }
+          });
+        }
+      });
+    </script>
   </head>
   <body>
     <a-scene>
@@ -584,7 +622,18 @@ geometry="primitive: plane; width: 1 heigth= 2"></a-image>
       <a-entity id="victorian"
         gltf-model="victorian_elegance.glb"
         animation-mixer="clip: Wave_One_Hand; loop: repeat"
-        position="1.6 0.40 -5" rotation="0 -18 0" scale="1 1 1"></a-entity>
+        position="1.6 0.40 -5" rotation="0 -18 0" scale="1 1 1"
+        sound="src: url(saludo_carmen.mp3); autoplay: false; positional: true; refDistance: 3; volume: 2"
+        saludo-carmen>
+        <!-- Zona de clic invisible (la detectan el ratón y los láseres de los mandos) -->
+        <a-cylinder class="clickable" position="0 0.85 0" radius="0.35" height="1.75"
+          material="opacity: 0; transparent: true; depthWrite: false"
+          event-set__enter="_event: raycaster-intersected; _target: #pistaCarmen; visible: true"
+          event-set__leave="_event: raycaster-intersected-cleared; _target: #pistaCarmen; visible: false"></a-cylinder>
+        <!-- Pista que aparece al apuntar a Carmen -->
+        <a-text id="pistaCarmen" value="Haz clic para saludar" align="center" color="#FFF"
+          position="0 1.95 0" width="3" visible="false"></a-text>
+      </a-entity>
 
       <!-- Puerta de Alcalá-->
 		 <a-assets>
@@ -603,6 +652,9 @@ geometry="primitive: plane; width: 1 heigth= 2"></a-image>
     
       <!-- Cámara-->
 	<a-camera><a-cursor></a-cursor></a-camera>
+
+      <!-- Cursor de ratón: permite hacer clic directamente sobre Carmen -->
+      <a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable"></a-entity>
       
       
       
