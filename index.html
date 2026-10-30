@@ -3,8 +3,8 @@
   <head>
    <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
    <script src="https://unpkg.com/aframe-event-set-component@3.0.3/dist/aframe-event-set-component.min.js"></script>
+   <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.4/dist/aframe-extras.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@fern-solutions/aframe-sky-background/dist/sky-background.umd.min.js"></script>
-	  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.7.0/dist/aframe-extras.min.js"></script>
   </head>
   <body>
     <a-scene>
@@ -580,6 +580,12 @@ geometry="primitive: plane; width: 1 heigth= 2"></a-image>
       
       
      
+      <!-- Personaje: Victorian Elegance (saluda al visitante junto al cartel de inicio) -->
+      <a-entity id="victorian"
+        gltf-model="victorian_elegance.glb"
+        animation-mixer="clip: Wave_One_Hand; loop: repeat"
+        position="1.6 0 -5" rotation="0 -18 0" scale="1 1 1"></a-entity>
+
       <!-- Puerta de Alcalá-->
 		 <a-assets>
     <a-asset-item id="Puerta_Alcalá" src="puerta_de_alcala_madrid_optimizado.glb"></a-asset-item>
