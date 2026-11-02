@@ -5,6 +5,26 @@
    <script src="https://unpkg.com/aframe-event-set-component@3.0.3/dist/aframe-event-set-component.min.js"></script>
    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.4/dist/aframe-extras.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@fern-solutions/aframe-sky-background/dist/sky-background.umd.min.js"></script>
+    <!-- Componente: perímetro de seguridad. Impide salir de la glorieta
+         (los paneles de cierre están a ~70 m del centro). -->
+    <script>
+      AFRAME.registerComponent('limite-recorrido', {
+        schema: { radio: {default: 66} },
+        init: function () { this.pos = new THREE.Vector3(); },
+        tick: function () { this.limitar(); },
+        tock: function () { this.limitar(); },
+        limitar: function () {
+          var o = this.el.object3D;
+          o.getWorldPosition(this.pos);
+          var d = Math.sqrt(this.pos.x * this.pos.x + this.pos.z * this.pos.z);
+          if (d <= this.data.radio) return;
+          var k = this.data.radio / d;
+          o.position.x -= this.pos.x * (1 - k);
+          o.position.z -= this.pos.z * (1 - k);
+        }
+      });
+    </script>
+
     <!-- Componente: saludo de Carmen al hacer clic (ratón o gatillo VR) -->
     <script>
       AFRAME.registerComponent('saludo-carmen', {
@@ -651,7 +671,7 @@ geometry="primitive: plane; width: 1 heigth= 2"></a-image>
        
     
       <!-- Cámara-->
-	<a-camera><a-cursor></a-cursor></a-camera>
+	<a-camera limite-recorrido="radio: 66"><a-cursor></a-cursor></a-camera>
 
       <!-- Cursor de ratón: permite hacer clic directamente sobre Carmen -->
       <a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable"></a-entity>
