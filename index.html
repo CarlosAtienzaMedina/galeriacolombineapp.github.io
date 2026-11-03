@@ -2,6 +2,9 @@
 <html>
   <head>
    <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+    <!-- Colisión con la malla de la Puerta (arcos, parte alta, techos) -->
+    <script src="three-mesh-bvh.min.js"></script>
+    <script src="colisiones.js"></script>
    <script src="https://unpkg.com/aframe-event-set-component@3.0.3/dist/aframe-event-set-component.min.js"></script>
    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.4/dist/aframe-extras.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@fern-solutions/aframe-sky-background/dist/sky-background.umd.min.js"></script>
@@ -70,13 +73,47 @@
     <script>
       AFRAME.registerComponent('colisionador', {
         schema: {
-          forma: {default: 'caja'},   // 'caja' o 'circulo'
+          forma: {default: 'caja'},   // 'caja', 'circulo' o 'auto' (toma forma y giro del propio cartel)
           ancho: {default: 1},        // caja: medida en X local (m)
           fondo: {default: 1},        // caja: medida en Z local (m)
           radio: {default: 0.5},      // círculo
           alto:  {default: 40}        // altura del obstáculo (centrada en su posición)
         },
-        init: function () { this.el.sceneEl.colisionadores = (this.el.sceneEl.colisionadores || []).concat(this); },
+        init: function () {
+          this.el.sceneEl.colisionadores = (this.el.sceneEl.colisionadores || []).concat(this);
+          this.p = new THREE.Vector3(); this.q = new THREE.Quaternion(); this.e = new THREE.Vector3();
+          this.eu = new THREE.Euler(); this.c = new THREE.Vector3(); this.t = new THREE.Vector3();
+        },
+        /* Caja orientada en el mundo: {x,y,z, hx,hy,hz, yaw, circulo}. null si está oculto. */
+        obb: function () {
+          for (var o = this.el.object3D; o; o = o.parent) if (o.visible === false) return null;
+          var d = this.data, r = this.r || (this.r = {});
+          if (d.forma === 'auto') {
+            var m = this.el.getObject3D('mesh');
+            if (!m || !m.geometry) return null;
+            var g = m.geometry; if (!g.boundingBox) g.computeBoundingBox();
+            m.updateWorldMatrix(true, false);
+            var me = m.matrixWorld.elements;
+            // escala de cada eje = longitud de cada columna (funciona aunque una escala sea 0)
+            var sx = Math.hypot(me[0], me[1], me[2]), sy = Math.hypot(me[4], me[5], me[6]), sz = Math.hypot(me[8], me[9], me[10]);
+            g.boundingBox.getCenter(this.c).applyMatrix4(m.matrixWorld);
+            g.boundingBox.getSize(this.t);
+            r.x = this.c.x; r.y = this.c.y; r.z = this.c.z;
+            r.hx = this.t.x * sx / 2; r.hy = this.t.y * sy / 2; r.hz = this.t.z * sz / 2;
+            // giro alrededor de Y a partir del eje X local (o del Z si el X está aplastado)
+            r.yaw = sx > 1e-6 ? Math.atan2(-me[2], me[0]) : Math.atan2(me[8], me[10]);
+            r.circulo = false;
+            if (!isFinite(r.x + r.y + r.z + r.hx + r.hy + r.hz + r.yaw)) return null;
+            return r;
+          }
+          this.el.object3D.getWorldPosition(this.p);
+          this.el.object3D.getWorldQuaternion(this.q);
+          r.x = this.p.x; r.y = this.p.y; r.z = this.p.z; r.hy = d.alto / 2;
+          r.yaw = this.eu.setFromQuaternion(this.q, 'YXZ').y;
+          r.circulo = d.forma === 'circulo'; r.radio = d.radio;
+          r.hx = d.ancho / 2; r.hz = d.fondo / 2;
+          return r;
+        },
         remove: function () { var l = this.el.sceneEl.colisionadores || []; l.splice(l.indexOf(this), 1); }
       });
 
@@ -94,32 +131,32 @@
         resolver: function () {
           var lista = this.el.sceneEl.colisionadores;
           if (!lista || !lista.length) return;
-          var camEl = this.el.hasAttribute('camera') ? this.el : this.el.querySelector('[camera]');
+          var camEl = (this.el.components && this.el.components.camera) ? this.el : this.el.querySelector('[camera]');
           if (!camEl) return;
           var R = this.data.radio, mover = this.el.object3D.position;
           for (var pasada = 0; pasada < 2; pasada++) {
             camEl.object3D.getWorldPosition(this.cam);
             var pieY = this.cam.y - this.data.cuerpo, cabezaY = this.cam.y + 0.1;
             for (var i = 0; i < lista.length; i++) {
-              var col = lista[i], d = col.data, o = col.el.object3D;
-              o.getWorldPosition(this.c);
-              var mitadAlto = d.alto / 2;
-              if (cabezaY < this.c.y - mitadAlto || pieY > this.c.y + mitadAlto) continue;
-              var dx = this.cam.x - this.c.x, dz = this.cam.z - this.c.z, ex = 0, ez = 0;
-              if (d.forma === 'circulo') {
-                var r = d.radio + R, dist = Math.sqrt(dx * dx + dz * dz);
+              var b = lista[i].obb();
+              if (!b) continue;                                   // oculto (cartela cerrada, otro mundo…)
+              if (cabezaY < b.y - b.hy || pieY > b.y + b.hy) continue;
+              var dx = this.cam.x - b.x, dz = this.cam.z - b.z, ex = 0, ez = 0;
+              if (b.circulo) {
+                var r = b.radio + R, dist = Math.sqrt(dx * dx + dz * dz);
                 if (dist >= r) continue;
                 if (dist < 1e-4) { dx = 1; dist = 1; }
                 ex = dx / dist * (r - dist); ez = dz / dist * (r - dist);
               } else {
-                var yaw = o.rotation.y, cs = Math.cos(yaw), sn = Math.sin(yaw);
+                var yaw = b.yaw, cs = Math.cos(yaw), sn = Math.sin(yaw);
                 var lx =  cs * dx - sn * dz, lz = sn * dx + cs * dz;      // a coordenadas locales
-                var hx = d.ancho / 2 + R, hz = d.fondo / 2 + R;
+                var hx = b.hx + R, hz = b.hz + R;
                 if (Math.abs(lx) >= hx || Math.abs(lz) >= hz) continue;
                 var px = hx - Math.abs(lx), pz = hz - Math.abs(lz), mx = 0, mz = 0;
                 if (px < pz) mx = (lx >= 0 ? 1 : -1) * px; else mz = (lz >= 0 ? 1 : -1) * pz;
                 ex = cs * mx + sn * mz; ez = -sn * mx + cs * mz;            // de vuelta al mundo
               }
+              if (!isFinite(ex) || !isFinite(ez)) continue;
               mover.x += ex; mover.z += ez;
               this.cam.x += ex; this.cam.z += ez;
             }
@@ -166,8 +203,8 @@
       
       <!--Cartel de inicio-->
 		   
-		   <a-cylinder position="0 0.60 -6" radius="0.5" height="1.50" color="#FFC65D" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
-		   <a-box position="0 1.60 -6" rotation="0 90 0" color="#4CC3D9" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/FP-LOGO-estable.jpg" 
+		   <a-cylinder colisionador="forma: auto" position="0 0.60 -6" radius="0.5" height="1.50" color="#FFC65D" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
+		   <a-box colisionador="forma: auto" position="0 1.60 -6" rotation="0 90 0" color="#4CC3D9" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/FP-LOGO-estable.jpg" 
 		   event-set__enter="_event: mouseenter; _target: #boxText0; visible: true" 
            event-set__leave="_event: mouseleave; _target: #boxText0; visible: false"></a-box>
 		  
@@ -187,7 +224,7 @@ geometry="primitive: plane; width: 6">
       <!-- Cartel inicio infografía-->
       
       
-       <a-box
+       <a-box colisionador="forma: auto"
               id="boxText0"
 position="0 1.65 -5" rotation="0 360 0"
 scale="1 1 0"	   
@@ -199,8 +236,8 @@ src="Carteles_Comprimidos/recorrido_00-INICIO.jpg"></a-box>
 		 
        <!-- Cartel Flecha 1-->
       
-        <a-cylinder position="0 0 -20" radius="0.5" height="1.5" color="#83632b" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
-		   <a-box position="0 1 -20" rotation="0 90 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
+        <a-cylinder colisionador="forma: auto" position="0 0 -20" radius="0.5" height="1.5" color="#83632b" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
+		   <a-box colisionador="forma: auto" position="0 1 -20" rotation="0 90 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
             event-set__enter="_event: mouseenter; _target: #boxText12; visible: true" 
               event-set__leave="_event: mouseleave; _target: #boxText12; visible: false"></a-box>
 		  
@@ -220,8 +257,8 @@ geometry="primitive: plane; width: 6">
       
         <!-- Cartel Flecha 2-->
       
-        <a-cylinder position="35 0 -13" radius="0.5" height="1.5" color="#83632b" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
-		   <a-box position="35 1 -13" rotation="0 -180 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
+        <a-cylinder colisionador="forma: auto" position="35 0 -13" radius="0.5" height="1.5" color="#83632b" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
+		   <a-box colisionador="forma: auto" position="35 1 -13" rotation="0 -180 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
             event-set__enter="_event: mouseenter; _target: #boxText13; visible: true" 
               event-set__leave="_event: mouseleave; _target: #boxText13; visible: false"></a-box>
 		  
@@ -240,8 +277,8 @@ geometry="primitive: plane; width: 6">
       
        <!-- Cartel Flecha 3-->
       
-        <a-cylinder position="31 0 14" radius="0.5" height="1.5" color="#83632b" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
-		   <a-box position="31 1 14" rotation="0 -90 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
+        <a-cylinder colisionador="forma: auto" position="31 0 14" radius="0.5" height="1.5" color="#83632b" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
+		   <a-box colisionador="forma: auto" position="31 1 14" rotation="0 -90 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
             event-set__enter="_event: mouseenter; _target: #boxText14; visible: true" 
               event-set__leave="_event: mouseleave; _target: #boxText14; visible: false"></a-box>
 		  
@@ -260,8 +297,8 @@ geometry="primitive: plane; width: 6">
       
        <!-- Cartel Flecha 4-->
       
-        <a-cylinder position="-33 0 12" radius="0.5" height="1.5" color="#83632b" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
-		   <a-box position="-33 1 12" rotation="0 -180 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
+        <a-cylinder colisionador="forma: auto" position="-33 0 12" radius="0.5" height="1.5" color="#83632b" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
+		   <a-box colisionador="forma: auto" position="-33 1 12" rotation="0 -180 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
             event-set__enter="_event: mouseenter; _target: #boxText15; visible: true" 
               event-set__leave="_event: mouseleave; _target: #boxText15; visible: false"></a-box>
 		  
@@ -279,8 +316,8 @@ geometry="primitive: plane; width: 6">
       
        <!-- Cartel Flecha 5-->
       
-        <a-cylinder position="-32 0 -15" radius="0.5" height="1.5" color="#FFC65D" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
-		   <a-box position="-32 1 -15" rotation="0 -90 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
+        <a-cylinder colisionador="forma: auto" position="-32 0 -15" radius="0.5" height="1.5" color="#FFC65D" material="color: #83632b" scale="-0.070 0.740 0.130"></a-cylinder>
+		   <a-box colisionador="forma: auto" position="-32 1 -15" rotation="0 -90 0" color="#f1bb5c" material="color: #f1bb5c" scale="0.10 0.97 1" src="Carteles_Comprimidos/flecha_derecha.jpg"
             event-set__enter="_event: mouseenter; _target: #boxText16; visible: true" 
               event-set__leave="_event: mouseleave; _target: #boxText16; visible: false"></a-box>
 		  
@@ -324,7 +361,7 @@ src="Carteles_Comprimidos/04CARTEL.jpg"
 
       
   <!-- Imagen emergente Infografía Carmen Burgos 4ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText11"
            src="Carteles_Comprimidos/04CARTELA.jpg"
             align="center"
@@ -361,7 +398,7 @@ src="Carteles_Comprimidos/05CARTEL.jpg"
       
       
       <!-- Imagen emergente Infografía Carmen Burgos 5ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText10"
            src="Carteles_Comprimidos/05CARTELA.jpg"
             align="center"
@@ -398,7 +435,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText9; visible: tr
 
        
       <!-- Imagen emergente Infografía Carmen Burgos 6ª-->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText9"
            src="Carteles_Comprimidos/06CARTELA.jpg"
             align="center"
@@ -434,7 +471,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText8; visible: tr
 
       
       <!-- Imagen emergente Infografía Carmen Burgos 7ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText8"
            src="Carteles_Comprimidos/07CARTELA.jpg"
             align="center"
@@ -468,7 +505,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText1; visible: tr
 
 
       <!-- Imagen emergente Infografía Carmen Burgos 8ªA. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText1"
            src="Carteles_Comprimidos/08CARTELA-2.jpg"
             align="center"
@@ -492,7 +529,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText8B; visible: t
   event-set__leave="_event: raycaster-intersected-cleared; _target: #boxText8B; visible: false">
 </a-box> 
       
-       <a-image 
+       <a-image colisionador="forma: auto" 
            id="boxText8B"
            src="Carteles_Comprimidos/08CARTELA-1.jpg"
             align="center"
@@ -521,7 +558,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText2; visible: tr
 		   
       
       <!-- Imagen emergente Infografía Carmen Burgos 3ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText2"
            src="Carteles_Comprimidos/03CARTELA.jpg"
             align="center"
@@ -553,7 +590,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText3; visible: tr
 		   
 		  
 		  <!-- Imagen emergente Infografía Carmen Burgos 2ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText3"
            src="Carteles_Comprimidos/02CARTELA.jpg"
             align="center"
@@ -585,7 +622,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText4; visible: tr
       
       
       <!-- Imagen emergente Infografía Carmen Burgos 1ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText4"
            src="Carteles_Comprimidos/01CARTELA.jpg"
             align="center"
@@ -613,7 +650,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText5; visible: tr
 
 		   
 		   <!-- Imagen emergente Infografía Carmen Burgos 11ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText5"
            src="Carteles_Comprimidos/11CARTELA.jpg"
             align="center"
@@ -643,7 +680,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText6; visible: tr
 		   
       
       <!-- Imagen emergente Infografía Carmen Burgos 10ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText6"
            src="Carteles_Comprimidos/10CARTELA.jpg"
             align="center"
@@ -674,7 +711,7 @@ event-set__enter="_event: raycaster-intersected; _target: #boxText7; visible: tr
  
       
       <!-- Imagen emergente Infografía Carmen Burgos 9ª. -->
-  <a-image 
+  <a-image colisionador="forma: auto" 
            id="boxText7"
            src="Carteles_Comprimidos/09CARTELA.jpg"
             align="center"
@@ -735,7 +772,7 @@ geometry="primitive: plane; width: 1 heigth= 2"></a-image>
        
     
       <!-- Cámara-->
-	<a-camera limite-recorrido="radio: 66" colisiones><a-cursor></a-cursor></a-camera>
+	<a-camera limite-recorrido="radio: 66" colisiones colision-malla="techo: true; alturas: 1.0 0.4 0"><a-cursor></a-cursor></a-camera>
 
       <!-- Cursor de ratón: permite hacer clic directamente sobre Carmen -->
       <a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable"></a-entity>
