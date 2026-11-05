@@ -126,8 +126,9 @@
           this.cam = new THREE.Vector3();
           this.c = new THREE.Vector3();
         },
-        tick: function () { this.resolver(); },
-        tock: function () { this.resolver(); },
+        // Un fallo aquí nunca debe detener el dibujado de la escena
+        tick: function () { try { this.resolver(); } catch (e) { if (!this.avisado) { this.avisado = true; console.warn('[colisiones] error ignorado:', e); } } },
+        tock: function () { try { this.resolver(); } catch (e) { } },
         resolver: function () {
           var lista = this.el.sceneEl.colisionadores;
           if (!lista || !lista.length) return;
